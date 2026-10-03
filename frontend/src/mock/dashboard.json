@@ -1,0 +1,17 @@
+{
+  "ready": true,
+  "merchant": {"id":"m1","name":"Sharma General Store","cash_balance":6000,"preapproved_limit":50000,"plan":"free"},
+  "kpis": {"revenue_at_risk_7d": 12500, "skus_at_risk": 4, "items_total": 8},
+  "sales_last_14d": [{"date":"2026-09-20","revenue":15200},{"date":"2026-09-21","revenue":18300},{"date":"2026-09-22","revenue":16100},{"date":"2026-09-23","revenue":14800},{"date":"2026-09-24","revenue":15900},{"date":"2026-09-25","revenue":17200},{"date":"2026-09-26","revenue":19500},{"date":"2026-09-27","revenue":15600},{"date":"2026-09-28","revenue":18100},{"date":"2026-09-29","revenue":16400},{"date":"2026-09-30","revenue":15100},{"date":"2026-10-01","revenue":16800},{"date":"2026-10-02","revenue":18900},{"date":"2026-10-03","revenue":17300}],
+  "skus": [
+    {"id":"parle-g","name":"Parle-G Biscuits","emoji":"🍪","current_stock":100,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":60.0,"days_left":1.7,"stockout_date":"2026-10-05","status":"critical","stock_pct":0.12},
+    {"id":"maggi","name":"Maggi 2-Min Noodles","emoji":"🍜","current_stock":130,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":45.0,"days_left":2.9,"stockout_date":"2026-10-06","status":"critical","stock_pct":0.21},
+    {"id":"lays","name":"Lay's Chips","emoji":"🥔","current_stock":110,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":30.0,"days_left":3.7,"stockout_date":"2026-10-07","status":"warning","stock_pct":0.26},
+    {"id":"atta","name":"Aashirvaad Atta 5kg","emoji":"🌾","current_stock":30,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":8.0,"days_left":3.8,"stockout_date":"2026-10-07","status":"warning","stock_pct":0.27},
+    {"id":"coke","name":"Coca-Cola 750ml","emoji":"🥤","current_stock":400,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":22.0,"days_left":18.2,"stockout_date":"2026-10-21","status":"ok","stock_pct":1.0},
+    {"id":"surf","name":"Surf Excel 1kg","emoji":"🧺","current_stock":70,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":3.0,"days_left":23.3,"stockout_date":"2026-10-26","status":"ok","stock_pct":1.0},
+    {"id":"salt","name":"Tata Salt 1kg","emoji":"🧂","current_stock":200,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":12.0,"days_left":16.7,"stockout_date":"2026-10-20","status":"ok","stock_pct":1.0},
+    {"id":"tea","name":"Red Label Tea 250g","emoji":"🍵","current_stock":70,"incoming_qty":0,"incoming_eta":null,"avg_daily_demand":6.0,"days_left":11.7,"stockout_date":"2026-10-15","status":"ok","stock_pct":0.83}
+  ],
+  "pending_proposal": null
+}
