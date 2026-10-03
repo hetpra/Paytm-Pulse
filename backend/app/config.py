@@ -4,10 +4,14 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env from project root (one level up from backend/)
-_env_path = Path(__file__).resolve().parent.parent / ".env"
-if _env_path.exists():
-    load_dotenv(_env_path)
+# Load .env from project root or backend/
+for _candidate in [
+    Path(__file__).resolve().parent.parent.parent / ".env",  # repo root
+    Path(__file__).resolve().parent.parent / ".env",         # backend/
+]:
+    if _candidate.exists():
+        load_dotenv(_candidate)
+        break
 
 # ── Infrastructure ──────────────────────────────────────────────
 DB_MODE: str = os.getenv("DB_MODE", "memory")                # memory | supabase
