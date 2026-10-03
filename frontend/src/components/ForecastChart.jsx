@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Area, ReferenceLine, ComposedChart } from 'recharts'
 import { fetchForecast } from '../api'
+import { useT } from '../localization'
 
 export default function ForecastChart({ skuId, isPremium, onClose }) {
+  const t = useT()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
@@ -64,11 +66,11 @@ export default function ForecastChart({ skuId, isPremium, onClose }) {
     <div className="mx-4 mt-3 bg-white rounded-xl shadow-sm overflow-hidden">
       <div className="px-3 pt-3 pb-1 flex items-center justify-between">
         <div>
-          <h3 className="text-xs font-bold text-[#002E6E]">{data.name} — Forecast</h3>
+          <h3 className="text-xs font-bold text-[#002E6E]">{data.name} — {t('Forecast')}</h3>
           {data.stockout_date && (
             <p className="text-[10px] text-red-500 font-medium">
-              Stockout: {new Date(data.stockout_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-              {data.days_left != null && ` (${data.days_left.toFixed(1)} days)`}
+              {t('Stockout:')} {new Date(data.stockout_date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {data.days_left != null && ` (${data.days_left.toFixed(1)} ${t('days')})`}
             </p>
           )}
         </div>
@@ -79,8 +81,8 @@ export default function ForecastChart({ skuId, isPremium, onClose }) {
         {/* Blur gate for free plan */}
         {!isPremium && (
           <div className="absolute inset-0 z-10 backdrop-blur-sm bg-white/60 flex flex-col items-center justify-center rounded-b-xl">
-            <p className="text-sm font-bold text-[#002E6E]">🔒 Unlock with Premium</p>
-            <p className="text-[10px] text-gray-500 mt-0.5">₹499/mo — Tap the plan badge above</p>
+            <p className="text-sm font-bold text-[#002E6E]">🔒 {t('Unlock with Premium')}</p>
+            <p className="text-[10px] text-gray-500 mt-0.5">{t('₹499/mo — Tap the plan badge above')}</p>
           </div>
         )}
 
@@ -125,9 +127,9 @@ export default function ForecastChart({ skuId, isPremium, onClose }) {
 
         {/* Legend */}
         <div className="flex items-center justify-center gap-4 pb-2 text-[9px] text-gray-400">
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#002E6E] inline-block" /> Actual</span>
-          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#00BAF2] inline-block border-dashed" /> Forecast</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#00BAF2]/10 inline-block rounded" /> Confidence</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#002E6E] inline-block" /> {t('Actual')}</span>
+          <span className="flex items-center gap-1"><span className="w-3 h-0.5 bg-[#00BAF2] inline-block border-dashed" /> {t('Forecast')}</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 bg-[#00BAF2]/10 inline-block rounded" /> {t('Confidence')}</span>
         </div>
       </div>
     </div>

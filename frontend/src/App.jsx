@@ -3,20 +3,20 @@ import Header from './components/Header'
 import SalesChart from './components/SalesChart'
 import RestockAlert from './components/RestockAlert'
 import SkuList from './components/SkuList'
-import RevenueView from './components/RevenueView'
 import Toast from './components/Toast'
 import { fetchDashboard, fetchFeatures, postAnalyze, approveProposal, rejectProposal, resetDemo, updatePlan } from './api'
 import { MerchantContext, Slot, TabBar } from './features/framework'
 import { enabledFeatures } from './features/registry'
+import { LanguageContext, translate } from './localization'
 
 function App() {
+  const [language, setLanguage] = useState(() => localStorage.getItem('pulse-language') || 'en')
   const [dashboard, setDashboard] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
   const [approving, setApproving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const [view, setView] = useState('merchant') // merchant | paytm
   const [features, setFeatures] = useState([])
   const [tab, setTab] = useState('home')
   const [merchantId, setMerchantId] = useState(() => localStorage.getItem('pulse-merchant') || 'm1')
@@ -50,6 +50,14 @@ function App() {
   }, [])
 
   useEffect(() => { localStorage.setItem('pulse-merchant', merchantId) }, [merchantId])
+  useEffect(() => {
+    const changeLanguage = event => setLanguage(event.detail || localStorage.getItem('pulse-language') || 'en')
+    window.addEventListener('pulse-language', changeLanguage)
+    return () => window.removeEventListener('pulse-language', changeLanguage)
+  }, [])
+  useEffect(() => {
+    document.documentElement.lang = language === 'hi' ? 'hi' : language === 'hinglish' ? 'hi-Latn' : 'en'
+  }, [language])
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
@@ -57,12 +65,12 @@ function App() {
       const data = await postAnalyze(merchantId)
       if (data.proposal) {
         await loadDashboard()
-        setToast({ type: 'info', message: 'Analysis complete — review the restock alert below' })
+        setToast({ type: 'info', message: translate(language, 'Restock plan ready — review the suggested order below') })
       } else {
-        setToast({ type: 'info', message: 'All items are well-stocked!' })
+        setToast({ type: 'info', message: translate(language, 'All items are well-stocked!') })
       }
     } catch (e) {
-      setToast({ type: 'error', message: 'Analysis failed' })
+      setToast({ type: 'error', message: translate(language, 'Analysis failed') })
     } finally {
       setAnalyzing(false)
     }
@@ -74,13 +82,13 @@ function App() {
       const result = await approveProposal(proposalId)
       const pos = result.purchase_orders || []
       const loan = result.loan
-      let msg = `Orders placed with ${pos.length} distributor(s) ✓`
-      if (loan) msg += ` · Loan ₹${loan.principal.toLocaleString('en-IN')} disbursed ✓`
-      if (result.merchant) msg += ` · Cash ₹${result.merchant.cash_balance.toLocaleString('en-IN')}`
+      let msg = translate(language, 'Orders placed with {count} distributor(s) ✓', { count: pos.length })
+      if (loan) msg += translate(language, ' · Loan ₹{amount} disbursed ✓', { amount: loan.principal.toLocaleString('en-IN') })
+      if (result.merchant) msg += translate(language, ' · Cash ₹{amount}', { amount: result.merchant.cash_balance.toLocaleString('en-IN') })
       setToast({ type: 'success', message: msg })
       await loadDashboard()
     } catch (e) {
-      setToast({ type: 'error', message: 'Approval failed' })
+      setToast({ type: 'error', message: translate(language, 'Approval failed') })
     } finally {
       setApproving(false)
     }
@@ -89,20 +97,20 @@ function App() {
   const handleReject = async (proposalId) => {
     try {
       await rejectProposal(proposalId)
-      setToast({ type: 'info', message: 'Proposal dismissed' })
+      setToast({ type: 'info', message: translate(language, 'Proposal dismissed') })
       await loadDashboard()
     } catch (e) {
-      setToast({ type: 'error', message: 'Rejection failed' })
+      setToast({ type: 'error', message: translate(language, 'Rejection failed') })
     }
   }
 
   const handleReset = async () => {
     try {
       await resetDemo(merchantId)
-      setToast({ type: 'info', message: 'Demo reset ✓' })
+      setToast({ type: 'info', message: translate(language, 'Demo reset ✓') })
       await loadDashboard()
     } catch (e) {
-      setToast({ type: 'error', message: 'Reset failed' })
+      setToast({ type: 'error', message: translate(language, 'Reset failed') })
     }
   }
 
@@ -112,22 +120,22 @@ function App() {
     try {
       await updatePlan(newPlan, merchantId)
       await loadDashboard()
-      setToast({ type: 'success', message: newPlan === 'premium' ? 'Premium activated! ₹499/mo' : 'Switched to Free plan' })
+      setToast({ type: 'success', message: translate(language, newPlan === 'premium' ? 'Premium activated! ₹499/mo' : 'Switched to Free plan') })
     } catch (e) {
-      setToast({ type: 'error', message: 'Plan update failed' })
+      setToast({ type: 'error', message: translate(language, 'Plan update failed') })
     }
   }
 
   // Loading skeleton
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="max-w-md w-full mx-auto p-4 space-y-4">
-          <div className="h-14 bg-gray-200 rounded-xl animate-pulse" />
-          <div className="h-8 bg-gray-200 rounded-lg animate-pulse w-3/4" />
-          <div className="h-40 bg-gray-200 rounded-xl animate-pulse" />
-          <div className="h-24 bg-gray-200 rounded-xl animate-pulse" />
-          <div className="h-24 bg-gray-200 rounded-xl animate-pulse" />
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-3">
+        <div className="app-shell max-w-md w-full mx-auto p-4 space-y-4">
+          <div className="h-24 bg-slate-200 rounded-2xl animate-pulse" />
+          <div className="h-8 bg-slate-200 rounded-lg animate-pulse w-3/4" />
+          <div className="h-40 bg-slate-200 rounded-2xl animate-pulse" />
+          <div className="h-24 bg-slate-200 rounded-2xl animate-pulse" />
+          <div className="h-24 bg-slate-200 rounded-2xl animate-pulse" />
         </div>
       </div>
     )
@@ -135,10 +143,10 @@ function App() {
 
   if (error && !dashboard) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center p-8">
-          <p className="text-red-500 text-lg mb-4">{error}</p>
-          <button onClick={loadDashboard} className="px-4 py-2 bg-[#00BAF2] text-white rounded-lg">Retry</button>
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+        <div className="app-shell text-center p-8 w-full max-w-md">
+          <p className="text-red-600 text-lg font-semibold mb-4">{translate(language, error)}</p>
+          <button onClick={loadDashboard} className="px-5 py-2.5 bg-[#00BAF2] text-white font-semibold rounded-xl shadow-sm">{translate(language, 'Retry')}</button>
         </div>
       </div>
     )
@@ -150,48 +158,50 @@ function App() {
   const activeFeature = enabledFeatures(features).find(feature => feature.id === tab)
   const ActiveTab = activeFeature?.Tab
   return (
+    <LanguageContext.Provider value={language}>
     <MerchantContext.Provider value={merchant.id}>
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-md mx-auto pb-20">
+    <div className="min-h-screen bg-slate-100 px-0 sm:px-4 sm:py-5">
+      <div className="app-shell max-w-md mx-auto min-h-screen sm:min-h-[calc(100vh-2.5rem)] pb-24 overflow-hidden">
         <Header
           merchant={merchant}
           onPlanToggle={handlePlanToggle}
           onStoreToggle={merchantId === 'm_user' || localStorage.getItem('pulse-user-store') ? () => setMerchantId(merchantId === 'm_user' ? 'm1' : 'm_user') : null}
+          headerRight={<Slot name="header.right" enabled={features} ctx={{ merchant, dashboard }} />}
         />
-        <Slot name="header.right" enabled={features} ctx={{ merchant, dashboard }} />
 
-        {/* View toggle */}
-        <div className="flex mx-4 mt-3 bg-gray-200 rounded-lg p-0.5">
-          <button
-            onClick={() => setView('merchant')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${view === 'merchant' ? 'bg-white text-[#002E6E] shadow-sm' : 'text-gray-500'}`}
-          >
-            Merchant View
-          </button>
-          <button
-            onClick={() => setView('paytm')}
-            className={`flex-1 py-1.5 text-xs font-medium rounded-md transition-all ${view === 'paytm' ? 'bg-white text-[#002E6E] shadow-sm' : 'text-gray-500'}`}
-          >
-            Paytm View
-          </button>
-        </div>
+        {!activeFeature && (
+          <div className="mx-4 mt-5 mb-1 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-[9px] font-bold tracking-[0.16em] text-slate-400 uppercase">{translate(language, 'Store overview')}</p>
+              <h2 className="mt-1 text-base font-bold tracking-tight text-[#002E6E]">{translate(language, 'Your business at a glance')}</h2>
+            </div>
+            <span className={`mb-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[9px] font-semibold ${hasAtRisk ? 'bg-amber-50 text-amber-800' : 'bg-cyan-50 text-[#005E8A]'}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${hasAtRisk ? 'bg-amber-500' : 'bg-[#00BAF2]'}`} />
+              {translate(language, hasAtRisk ? 'Needs attention' : 'On track')}
+            </span>
+          </div>
+        )}
 
-        {view === 'merchant' ? (
-          <>
-            {!activeFeature && <Slot name="dashboard.top" enabled={features} ctx={{ merchant, dashboard }} />}
-            {!activeFeature && <>{/* KPI row */}
-            <div className="flex gap-2 mx-4 mt-3">
+        {!activeFeature && <Slot name="dashboard.top" enabled={features} ctx={{ merchant, dashboard }} />}
+        {!activeFeature && <>{/* KPI row */}
+            <div className="grid grid-cols-2 gap-3 mx-4 mt-4">
               {kpis.revenue_at_risk_7d > 0 && (
-                <div className="flex-1 bg-red-50 border border-red-200 rounded-xl p-3">
-                  <p className="text-[10px] text-red-500 uppercase font-medium">Revenue at risk</p>
-                  <p className="text-lg font-bold text-red-600">₹{kpis.revenue_at_risk_7d.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
-                  <p className="text-[10px] text-red-400">this week</p>
+                <div className="metric-card metric-card-risk">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-[9px] text-rose-700 uppercase font-bold tracking-[0.1em]">{translate(language, 'Revenue at risk')}</p>
+                    <span className="metric-icon text-rose-700" aria-hidden="true">₹</span>
+                  </div>
+                  <p className="text-xl font-bold text-slate-900 mt-2 tabular-nums">₹{kpis.revenue_at_risk_7d.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</p>
+                  <p className="text-[10px] text-slate-500 mt-1">{translate(language, 'Potential sales · next 7 days')}</p>
                 </div>
               )}
-              <div className={`flex-1 rounded-xl p-3 ${kpis.skus_at_risk > 0 ? 'bg-amber-50 border border-amber-200' : 'bg-green-50 border border-green-200'}`}>
-                <p className={`text-[10px] uppercase font-medium ${kpis.skus_at_risk > 0 ? 'text-amber-500' : 'text-green-500'}`}>Items at risk</p>
-                <p className={`text-lg font-bold ${kpis.skus_at_risk > 0 ? 'text-amber-600' : 'text-green-600'}`}>{kpis.skus_at_risk}</p>
-                <p className={`text-[10px] ${kpis.skus_at_risk > 0 ? 'text-amber-400' : 'text-green-400'}`}>of {kpis.items_total} total</p>
+              <div className={`metric-card ${kpis.skus_at_risk > 0 ? 'metric-card-stock-risk' : 'metric-card-good'} ${kpis.revenue_at_risk_7d > 0 ? '' : 'col-span-2'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className={`text-[9px] uppercase font-bold tracking-[0.1em] ${kpis.skus_at_risk > 0 ? 'text-amber-800' : 'text-[#005E8A]'}`}>{translate(language, 'Items at risk')}</p>
+                  <span className="metric-icon text-[#002E6E]" aria-hidden="true">▦</span>
+                </div>
+                <p className="text-xl font-bold text-slate-900 mt-2 tabular-nums">{kpis.skus_at_risk}<span className="text-xs font-medium text-slate-400"> / {kpis.items_total}</span></p>
+                <p className="text-[10px] text-slate-500 mt-1">{translate(language, kpis.skus_at_risk > 0 ? 'Stock may run low soon' : 'All listed items look covered')}</p>
               </div>
             </div>
 
@@ -210,19 +220,19 @@ function App() {
 
             {/* Analyze button */}
             {!pending_proposal && hasAtRisk && (
-              <div className="mx-4 mt-3">
+              <div className="mx-4 mt-4">
                 <button
                   onClick={handleAnalyze}
                   disabled={analyzing}
-                  className="w-full py-3 bg-[#00BAF2] text-white font-semibold rounded-xl hover:bg-[#009dd4] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                  className="w-full py-3 bg-[#00BAF2] text-[#002E6E] font-semibold rounded-xl hover:bg-[#00a8dc] transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {analyzing ? (
                     <>
                       <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                      Analyzing...
+                      {translate(language, 'Preparing your restock plan…')}
                     </>
                   ) : (
-                    '🤖 Run AI Analysis'
+                    translate(language, 'Create restock plan')
                   )}
                 </button>
               </div>
@@ -231,21 +241,18 @@ function App() {
             {/* SKU list */}
             <SkuList skus={skus} plan={merchant.plan} />
             <Slot name="dashboard.bottom" enabled={features} ctx={{ merchant, dashboard }} /></>}
-            {ActiveTab && <ActiveTab merchant={merchant} dashboard={dashboard} />}
-          </>
-        ) : (
-          <RevenueView />
-        )}
+        {ActiveTab && <div className="feature-panel"><ActiveTab merchant={merchant} dashboard={dashboard} /></div>}
 
-        {/* Footer */}
-        <div className="text-center mt-8 mb-4">
-          <button
-            onClick={handleReset}
-            className="text-xs text-gray-400 hover:text-gray-600 underline"
-          >
-            Reset demo
-          </button>
-        </div>
+        {tab === 'impact' && (
+          <div className="text-center mt-5 mb-4">
+            <button
+              onClick={handleReset}
+              className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-4"
+            >
+              {translate(language, 'Reset demo')}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Toast */}
@@ -254,6 +261,7 @@ function App() {
       <TabBar enabled={features} active={tab} onChange={setTab} />
     </div>
     </MerchantContext.Provider>
+    </LanguageContext.Provider>
   )
 }
 

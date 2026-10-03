@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import ForecastChart from './ForecastChart'
+import { useT } from '../localization'
 
 const STATUS_COLORS = {
   critical: { bg: 'bg-red-500', text: 'text-red-600', bar: 'bg-red-400' },
@@ -9,16 +10,23 @@ const STATUS_COLORS = {
 }
 
 export default function SkuList({ skus, plan }) {
+  const t = useT()
   const [selectedSku, setSelectedSku] = useState(null)
 
   if (!skus || skus.length === 0) return null
 
   return (
     <>
-      <div className="mx-4 mt-3">
-        <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Inventory</h3>
+      <div className="mx-4 mt-5">
+        <div className="flex items-end justify-between mb-2.5">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">{t('Inventory')}</h3>
+            <p className="text-[10px] text-slate-400 mt-0.5">{t('Tap an item to view its forecast')}</p>
+          </div>
+          <span className="text-[10px] font-semibold text-slate-500 bg-white border border-slate-200 rounded-full px-2 py-1">{t('{count} items', { count: skus.length })}</span>
+        </div>
 
-        <div className="bg-white rounded-xl shadow-sm overflow-hidden divide-y divide-gray-50">
+        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden divide-y divide-slate-100">
           {skus.map(sku => {
             const colors = STATUS_COLORS[sku.status] || STATUS_COLORS.ok
             const barWidth = Math.max(3, Math.min(100, sku.stock_pct * 100))
@@ -26,20 +34,20 @@ export default function SkuList({ skus, plan }) {
             return (
               <div data-testid="sku-row"
                 key={sku.id}
-                className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors"
+                className="flex items-center gap-3 px-3.5 py-3 hover:bg-slate-50/80 cursor-pointer transition-colors"
                 onClick={() => setSelectedSku(sku.id === selectedSku ? null : sku.id)}
               >
-                <span className="text-lg w-7 text-center">{sku.emoji}</span>
+                <span className="text-lg w-9 h-9 rounded-xl bg-slate-50 flex items-center justify-center shrink-0">{sku.emoji}</span>
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium text-gray-800 truncate">{sku.name}</p>
                     <span className={`text-[10px] font-medium ${colors.text}`}>
                       {sku.status === 'incoming'
-                        ? 'Incoming'
+                        ? t('Incoming')
                         : sku.days_left <= 1
-                          ? 'Out tomorrow!'
-                          : `≈${sku.days_left.toFixed(1)} days`
+                          ? t('Out tomorrow!')
+                          : t('≈{days} days', { days: sku.days_left.toFixed(1) })
                       }
                     </span>
                   </div>
@@ -55,7 +63,7 @@ export default function SkuList({ skus, plan }) {
                   {/* Incoming chip */}
                   {sku.incoming_qty > 0 && (
                     <p className="text-[10px] text-blue-500 font-medium mt-1">
-                      📦 +{sku.incoming_qty} arriving {sku.incoming_eta}
+                      📦 +{sku.incoming_qty} {t('arriving {date}', { date: sku.incoming_eta })}
                     </p>
                   )}
                 </div>
