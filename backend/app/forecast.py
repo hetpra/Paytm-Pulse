@@ -12,6 +12,7 @@ import pandas as pd
 
 from app.config import FORECAST_HORIZON, FORECAST_ENGINE
 from app.repo import get_repo
+from app.ext import hooks
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def compute_stockout(stock: int, yhat: list[float], today: date) -> tuple[float,
 
 
 # ── Prophet forecaster ──────────────────────────────────────────
-def _prophet_forecast(df: pd.DataFrame) -> Optional[pd.DataFrame]:
+def _prophet_forecast(df: pd.DataFrame, horizon: int = FORECAST_HORIZON, sku: dict | None = None) -> Optional[pd.DataFrame]:
     """Run Prophet forecast. Returns dataframe with ds, yhat, yhat_lower, yhat_upper or None on failure."""
     try:
         from prophet import Prophet
@@ -57,12 +58,13 @@ def _prophet_forecast(df: pd.DataFrame) -> Optional[pd.DataFrame]:
             daily_seasonality=False,
             interval_width=0.8,
         )
+        m = hooks.apply("forecast.model", m, sku=sku)
         m.fit(df)
 
-        future = m.make_future_dataframe(periods=FORECAST_HORIZON)
+        future = m.make_future_dataframe(periods=horizon)
         # Only keep the forecast period (tomorrow onward)
         forecast = m.predict(future)
-        forecast = forecast.tail(FORECAST_HORIZON).reset_index(drop=True)
+        forecast = forecast.tail(horizon).reset_index(drop=True)
 
         # Clamp to >= 0
         for col in ("yhat", "yhat_lower", "yhat_upper"):
@@ -75,7 +77,7 @@ def _prophet_forecast(df: pd.DataFrame) -> Optional[pd.DataFrame]:
 
 
 # ── Fallback forecaster ─────────────────────────────────────────
-def _fallback_forecast(df: pd.DataFrame, today: date) -> pd.DataFrame:
+def _fallback_forecast(df: pd.DataFrame, today: date, horizon: int = FORECAST_HORIZON) -> pd.DataFrame:
     """
     Seasonal-average fallback.
     yhat[d] = mean(units on the same weekday over last 8 weeks) × trend_clamp
@@ -104,7 +106,7 @@ def _fallback_forecast(df: pd.DataFrame, today: date) -> pd.DataFrame:
         trend = 1.0
 
     rows = []
-    for d in range(FORECAST_HORIZON):
+    for d in range(horizon):
         day = today + timedelta(days=d + 1)  # day 1 = tomorrow
         dow = day.weekday()
         yhat = max(0, dow_mean.get(dow, recent["y"].mean()) * trend)
@@ -117,6 +119,24 @@ def _fallback_forecast(df: pd.DataFrame, today: date) -> pd.DataFrame:
         })
 
     return pd.DataFrame(rows)
+
+
+def fit_predict(history_df: pd.DataFrame, horizon: int, sku: dict | None = None,
+                backtest: bool = False) -> list[dict]:
+    """Public engine seam used by extensions for deterministic backtests."""
+    today = date.today()
+    if FORECAST_ENGINE == "prophet":
+        frame = _prophet_forecast(history_df, horizon, sku)
+        if frame is None:
+            frame = _fallback_forecast(history_df, today, horizon)
+    else:
+        frame = _fallback_forecast(history_df, today, horizon)
+    return [{
+        "date": row["ds"].strftime("%Y-%m-%d") if hasattr(row["ds"], "strftime") else str(row["ds"])[:10],
+        "yhat": round(float(row["yhat"]), 2),
+        "lower": round(float(row["yhat_lower"]), 2),
+        "upper": round(float(row["yhat_upper"]), 2),
+    } for _, row in frame.iterrows()]
 
 
 # ── Main forecast runner ────────────────────────────────────────
@@ -140,7 +160,7 @@ def forecast_sku(sku_id: str, merchant_id: str = "m1") -> dict:
     forecast_df = None
 
     if FORECAST_ENGINE == "prophet":
-        forecast_df = _prophet_forecast(df)
+        forecast_df = _prophet_forecast(df, sku=next((s for s in repo.list_skus(merchant_id) if s["id"] == sku_id), None))
         if forecast_df is not None:
             engine_used = "prophet"
         else:
@@ -151,25 +171,22 @@ def forecast_sku(sku_id: str, merchant_id: str = "m1") -> dict:
         forecast_df = _fallback_forecast(df, today)
         engine_used = "fallback"
 
-    yhat_list = forecast_df["yhat"].tolist()
-
-    # Compute stockout
     sku = next((s for s in repo.list_skus(merchant_id) if s["id"] == sku_id), None)
     if not sku:
         return {}
 
+    series = [{
+        "date": row["ds"].strftime("%Y-%m-%d") if hasattr(row["ds"], "strftime") else str(row["ds"])[:10],
+        "yhat": round(float(row["yhat"]), 2),
+        "lower": round(float(row["yhat_lower"]), 2),
+        "upper": round(float(row["yhat_upper"]), 2),
+    } for _, row in forecast_df.iterrows()]
+    series = hooks.apply("forecast.series", series, sku=sku, today=today, backtest=False)
+    # Extensions may adjust forecast points (for example, a clearly-labelled
+    # festival assumption).  Stockout math must use the adjusted series too.
+    yhat_list = [point["yhat"] for point in series]
     days_left, stockout_date = compute_stockout(sku["current_stock"], yhat_list, today)
     avg_daily_demand = float(np.mean(yhat_list[:7]))
-
-    # Build series JSON
-    series = []
-    for _, row in forecast_df.iterrows():
-        series.append({
-            "date": row["ds"].strftime("%Y-%m-%d") if hasattr(row["ds"], "strftime") else str(row["ds"])[:10],
-            "yhat": round(float(row["yhat"]), 2),
-            "lower": round(float(row["yhat_lower"]), 2),
-            "upper": round(float(row["yhat_upper"]), 2),
-        })
 
     result = {
         "engine": engine_used,

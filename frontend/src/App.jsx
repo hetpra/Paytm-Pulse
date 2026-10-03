@@ -5,7 +5,9 @@ import RestockAlert from './components/RestockAlert'
 import SkuList from './components/SkuList'
 import RevenueView from './components/RevenueView'
 import Toast from './components/Toast'
-import { fetchDashboard, postAnalyze, approveProposal, rejectProposal, resetDemo, updatePlan } from './api'
+import { fetchDashboard, fetchFeatures, postAnalyze, approveProposal, rejectProposal, resetDemo, updatePlan } from './api'
+import { MerchantContext, Slot, TabBar } from './features/framework'
+import { enabledFeatures } from './features/registry'
 
 function App() {
   const [dashboard, setDashboard] = useState(null)
@@ -15,25 +17,44 @@ function App() {
   const [approving, setApproving] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [view, setView] = useState('merchant') // merchant | paytm
+  const [features, setFeatures] = useState([])
+  const [tab, setTab] = useState('home')
+  const [merchantId, setMerchantId] = useState(() => localStorage.getItem('pulse-merchant') || 'm1')
 
   const loadDashboard = useCallback(async () => {
     try {
-      const data = await fetchDashboard()
+      const data = await fetchDashboard(merchantId)
       setDashboard(data)
       setError(null)
     } catch (e) {
+      if (merchantId === 'm_user') {
+        localStorage.removeItem('pulse-user-store')
+        setMerchantId('m1')
+        return
+      }
       setError('Failed to load dashboard')
     } finally {
       setLoading(false)
     }
+  }, [merchantId])
+
+  useEffect(() => {
+    loadDashboard()
+    fetchFeatures().then(data => setFeatures(data.enabled || [])).catch(() => setFeatures([]))
+  }, [loadDashboard])
+
+  useEffect(() => {
+    const switchStore = event => setMerchantId(event.detail || 'm1')
+    window.addEventListener('pulse-store', switchStore)
+    return () => window.removeEventListener('pulse-store', switchStore)
   }, [])
 
-  useEffect(() => { loadDashboard() }, [loadDashboard])
+  useEffect(() => { localStorage.setItem('pulse-merchant', merchantId) }, [merchantId])
 
   const handleAnalyze = async () => {
     setAnalyzing(true)
     try {
-      const data = await postAnalyze()
+      const data = await postAnalyze(merchantId)
       if (data.proposal) {
         await loadDashboard()
         setToast({ type: 'info', message: 'Analysis complete — review the restock alert below' })
@@ -77,7 +98,7 @@ function App() {
 
   const handleReset = async () => {
     try {
-      await resetDemo()
+      await resetDemo(merchantId)
       setToast({ type: 'info', message: 'Demo reset ✓' })
       await loadDashboard()
     } catch (e) {
@@ -89,7 +110,7 @@ function App() {
     if (!dashboard) return
     const newPlan = dashboard.merchant.plan === 'premium' ? 'free' : 'premium'
     try {
-      await updatePlan(newPlan)
+      await updatePlan(newPlan, merchantId)
       await loadDashboard()
       setToast({ type: 'success', message: newPlan === 'premium' ? 'Premium activated! ₹499/mo' : 'Switched to Free plan' })
     } catch (e) {
@@ -126,13 +147,18 @@ function App() {
   const { merchant, kpis, sales_last_14d, skus, pending_proposal } = dashboard
   const hasAtRisk = kpis.skus_at_risk > 0
 
+  const activeFeature = enabledFeatures(features).find(feature => feature.id === tab)
+  const ActiveTab = activeFeature?.Tab
   return (
+    <MerchantContext.Provider value={merchant.id}>
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-md mx-auto pb-20">
         <Header
           merchant={merchant}
           onPlanToggle={handlePlanToggle}
+          onStoreToggle={merchantId === 'm_user' || localStorage.getItem('pulse-user-store') ? () => setMerchantId(merchantId === 'm_user' ? 'm1' : 'm_user') : null}
         />
+        <Slot name="header.right" enabled={features} ctx={{ merchant, dashboard }} />
 
         {/* View toggle */}
         <div className="flex mx-4 mt-3 bg-gray-200 rounded-lg p-0.5">
@@ -152,7 +178,8 @@ function App() {
 
         {view === 'merchant' ? (
           <>
-            {/* KPI row */}
+            {!activeFeature && <Slot name="dashboard.top" enabled={features} ctx={{ merchant, dashboard }} />}
+            {!activeFeature && <>{/* KPI row */}
             <div className="flex gap-2 mx-4 mt-3">
               {kpis.revenue_at_risk_7d > 0 && (
                 <div className="flex-1 bg-red-50 border border-red-200 rounded-xl p-3">
@@ -203,6 +230,8 @@ function App() {
 
             {/* SKU list */}
             <SkuList skus={skus} plan={merchant.plan} />
+            <Slot name="dashboard.bottom" enabled={features} ctx={{ merchant, dashboard }} /></>}
+            {ActiveTab && <ActiveTab merchant={merchant} dashboard={dashboard} />}
           </>
         ) : (
           <RevenueView />
@@ -221,7 +250,10 @@ function App() {
 
       {/* Toast */}
       {toast && <Toast {...toast} onClose={() => setToast(null)} />}
+      <Slot name="app.overlay" enabled={features} ctx={{ merchant, dashboard }} />
+      <TabBar enabled={features} active={tab} onChange={setTab} />
     </div>
+    </MerchantContext.Provider>
   )
 }
 

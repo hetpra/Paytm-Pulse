@@ -123,3 +123,11 @@ class MemoryRepo(BaseRepo):
         for sk in skus:
             self.skus[sk["id"]] = copy.deepcopy(sk)
             self._base_skus[sk["id"]] = copy.deepcopy(sk)
+
+    def delete_merchant_data(self, merchant_id: str) -> None:
+        sku_ids = {sid for sid, sku in self.skus.items() if sku["merchant_id"] == merchant_id}
+        self.sales = [row for row in self.sales if row["sku_id"] not in sku_ids]
+        for sid in sku_ids:
+            self.skus.pop(sid, None); self.forecasts.pop(sid, None); self._base_skus.pop(sid, None)
+        self.merchants.pop(merchant_id, None); self._base_merchant.pop(merchant_id, None)
+        self.clear_transactions(merchant_id)

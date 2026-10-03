@@ -228,4 +228,4 @@ frontend/.env
 # Documentation & AI guides (local only)
 AGENTS.md
 MANUAL.md
-
+MANUAL_EXTENDED.md

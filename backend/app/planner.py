@@ -19,6 +19,7 @@ from app.config import (
     PREMIUM_PRICE,
     SAFETY_FACTOR,
 )
+from app.ext import hooks
 
 
 def status_for(sku: dict, forecast: dict) -> str:
@@ -26,7 +27,7 @@ def status_for(sku: dict, forecast: dict) -> str:
     if sku.get("incoming_qty", 0) > 0:
         return "incoming"
     days_left = forecast.get("days_left", 999)
-    lead = sku.get("lead_time_days", 2)
+    lead = hooks.apply("planner.lead_time", sku.get("lead_time_days", 2), sku=sku)
     if days_left <= lead:
         return "critical"
     if days_left <= lead + AT_RISK_BUFFER_DAYS:
@@ -39,7 +40,7 @@ def reorder_qty(sku: dict, forecast: dict) -> int:
     Reorder quantity: max(0, ceil(sum(yhat[0 : lead + COVER_DAYS]) × SAFETY_FACTOR − current_stock)).
     """
     series = forecast.get("series", [])
-    lead = sku.get("lead_time_days", 2)
+    lead = hooks.apply("planner.lead_time", sku.get("lead_time_days", 2), sku=sku)
     window = lead + COVER_DAYS
     yhat_values = [s.get("yhat", 0) for s in series[:window]]
     demand = sum(yhat_values) * SAFETY_FACTOR
@@ -48,7 +49,7 @@ def reorder_qty(sku: dict, forecast: dict) -> int:
 
 
 def build_plan(at_risk_skus: list[dict], forecasts: dict[str, dict],
-               suppliers: dict[str, dict]) -> dict:
+               suppliers: dict[str, dict], merchant: dict | None = None) -> dict:
     """
     Build line items and POs grouped by supplier.
 
@@ -61,7 +62,6 @@ def build_plan(at_risk_skus: list[dict], forecasts: dict[str, dict],
         {line_items, purchase_orders, subtotal, platform_fee, total}
     """
     line_items = []
-    po_by_supplier: dict[str, dict] = {}  # supplier_id -> {items, subtotal}
 
     for sku in at_risk_skus:
         fc = forecasts.get(sku["id"], {})
@@ -86,8 +86,12 @@ def build_plan(at_risk_skus: list[dict], forecasts: dict[str, dict],
         }
         line_items.append(item)
 
-        # Group by supplier
-        sid = sku["supplier_id"]
+    line_items = hooks.apply("planner.line_items", line_items, merchant=merchant,
+                             skus=at_risk_skus, forecasts=forecasts)
+    po_by_supplier: dict[str, dict] = {}
+    for item in line_items:
+        sid = item["supplier_id"]
+        supplier = suppliers.get(sid, {})
         if sid not in po_by_supplier:
             po_by_supplier[sid] = {
                 "supplier_id": sid,
@@ -95,7 +99,7 @@ def build_plan(at_risk_skus: list[dict], forecasts: dict[str, dict],
                 "subtotal": 0,
                 "items": [],
             }
-        po_by_supplier[sid]["subtotal"] += line_total
+        po_by_supplier[sid]["subtotal"] += item["line_total"]
         po_by_supplier[sid]["items"].append(item)
 
     # Compute PO fees

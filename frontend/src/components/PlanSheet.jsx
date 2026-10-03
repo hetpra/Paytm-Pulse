@@ -12,7 +12,7 @@ export default function PlanSheet({ proposal, onClose, onApprove, onReject, appr
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+    <div data-testid="plan-sheet" className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/40" />
 
@@ -106,7 +106,10 @@ export default function PlanSheet({ proposal, onClose, onApprove, onReject, appr
                   <span>Repay in {loan_offer.tenure_days} days</span>
                   <span>₹{loan_offer.total_repayment.toLocaleString('en-IN')}</span>
                 </div>
+                {loan_offer.daily_deduction && <div className="flex justify-between"><span>Daily settlement deduction</span><span>₹{loan_offer.daily_deduction.toLocaleString('en-IN')}</span></div>}
+                {loan_offer.apr_pct && <div className="flex justify-between"><span>Effective APR (illustrative)</span><span>≈ {loan_offer.apr_pct}%</span></div>}
               </div>
+              {loan_offer.eligibility?.reasons?.map((reason, index) => <p key={index} className="text-[10px] text-blue-800 mt-1">✓ {reason}</p>)}
               {!loan_offer.fully_covered && (
                 <p className="text-[10px] text-amber-600 mt-1">⚠️ Loan doesn't fully cover the gap</p>
               )}

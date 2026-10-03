@@ -72,3 +72,6 @@ class BaseRepo(ABC):
 
     @abstractmethod
     def seed_base(self, merchant: dict, suppliers: list[dict], skus: list[dict]) -> None: ...
+
+    @abstractmethod
+    def delete_merchant_data(self, merchant_id: str) -> None: ...

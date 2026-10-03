@@ -5,12 +5,13 @@ import json
 import logging
 from datetime import date, timedelta
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.repo import get_repo
 from app import planner
-from app.config import AT_RISK_BUFFER_DAYS
+from app.config import MERCHANT_ID
+from app.ext import hooks
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -18,32 +19,45 @@ router = APIRouter()
 
 # ── Request models ──────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
-    merchant_id: str = "m1"
+    merchant_id: str = MERCHANT_ID
 
 class PlanRequest(BaseModel):
     plan: str  # "free" | "premium"
+    merchant_id: str = MERCHANT_ID
 
 
 # ── Dashboard ───────────────────────────────────────────────────
+def risk_view(merchant_id: str) -> tuple[list[dict], dict[str, dict]]:
+    """The shared stock-risk calculation used by the UI and the graph."""
+    repo = get_repo()
+    skus = repo.list_skus(merchant_id)
+    forecasts = {f["sku_id"]: f for f in repo.get_forecasts(merchant_id)}
+    items = []
+    for sku in skus:
+        fc = forecasts.get(sku["id"], {})
+        status = planner.status_for(sku, fc)
+        items.append({**sku, "_forecast": fc, "_status": status})
+    return items, forecasts
+
+
 @router.get("/api/dashboard")
-def dashboard():
+def dashboard(merchant_id: str = MERCHANT_ID):
     from app.main import forecasts_ready
     repo = get_repo()
-    merchant = repo.get_merchant("m1")
+    merchant = repo.get_merchant(merchant_id)
     if not merchant:
         raise HTTPException(404, "Merchant not found")
 
-    skus = repo.list_skus("m1")
-    forecasts_list = repo.get_forecasts("m1")
-    forecasts = {f["sku_id"]: f for f in forecasts_list}
+    risk_skus, forecasts = risk_view(merchant_id)
+    skus = [{k: v for k, v in sku.items() if not k.startswith("_")} for sku in risk_skus]
 
     # Build SKU dashboard items
     sku_items = []
     at_risk_count = 0
-    for sku in skus:
-        fc = forecasts.get(sku["id"], {})
+    for source, sku in zip(risk_skus, skus):
+        fc = source["_forecast"]
         days_left = fc.get("days_left", 999)
-        status = planner.status_for(sku, fc)
+        status = source["_status"]
         if status in ("critical", "warning"):
             at_risk_count += 1
         stock_pct = min(1, days_left / 14) if days_left < float("inf") else 1.0
@@ -73,7 +87,7 @@ def dashboard():
     sales_14d = _sales_last_14d(skus)
 
     # Pending proposal
-    pending = repo.get_pending_proposal("m1")
+    pending = repo.get_pending_proposal(merchant_id)
     pending_payload = None
     if pending:
         payload = pending.get("payload", {})
@@ -81,7 +95,7 @@ def dashboard():
             payload = json.loads(payload)
         pending_payload = payload
 
-    return {
+    payload = {
         "ready": forecasts_ready,
         "merchant": merchant,
         "kpis": {
@@ -93,6 +107,7 @@ def dashboard():
         "skus": sku_items,
         "pending_proposal": pending_payload,
     }
+    return hooks.apply("dashboard.payload", payload, merchant_id=merchant_id)
 
 
 def _sales_last_14d(skus: list[dict]) -> list[dict]:
@@ -117,14 +132,14 @@ def _sales_last_14d(skus: list[dict]) -> list[dict]:
 
 # ── Forecast detail ─────────────────────────────────────────────
 @router.get("/api/skus/{sku_id}/forecast")
-def sku_forecast(sku_id: str):
+def sku_forecast(sku_id: str, merchant_id: str = MERCHANT_ID):
     repo = get_repo()
-    skus = repo.list_skus("m1")
+    skus = repo.list_skus(merchant_id)
     sku = next((s for s in skus if s["id"] == sku_id), None)
     if not sku:
         raise HTTPException(404, "SKU not found")
 
-    forecasts = repo.get_forecasts("m1")
+    forecasts = repo.get_forecasts(merchant_id)
     fc = next((f for f in forecasts if f["sku_id"] == sku_id), None)
 
     # History: last 30 days
@@ -159,7 +174,7 @@ def analyze(req: AnalyzeRequest):
 
 # ── Proposal detail ─────────────────────────────────────────────
 @router.get("/api/proposals/{proposal_id}")
-def get_proposal(proposal_id: str):
+def get_proposal(proposal_id: str, merchant_id: str = MERCHANT_ID):
     repo = get_repo()
     proposal = repo.get_proposal(proposal_id)
     if not proposal:
@@ -172,10 +187,12 @@ def get_proposal(proposal_id: str):
 
 # ── Approve ─────────────────────────────────────────────────────
 @router.post("/api/proposals/{proposal_id}/approve")
-def approve_proposal(proposal_id: str):
+def approve_proposal(proposal_id: str, merchant_id: str = MERCHANT_ID):
     from app.graph import run_approve
     try:
         result = run_approve(proposal_id)
+    except RuntimeError as e:
+        raise HTTPException(409, {"error": "already_decided", "proposal": e.args[0]})
     except ValueError as e:
         raise HTTPException(404, str(e))
     return result
@@ -183,10 +200,12 @@ def approve_proposal(proposal_id: str):
 
 # ── Reject ──────────────────────────────────────────────────────
 @router.post("/api/proposals/{proposal_id}/reject")
-def reject_proposal(proposal_id: str):
+def reject_proposal(proposal_id: str, merchant_id: str = MERCHANT_ID):
     from app.graph import run_reject
     try:
         result = run_reject(proposal_id)
+    except RuntimeError as e:
+        raise HTTPException(409, {"error": "already_decided", "proposal": e.args[0]})
     except ValueError as e:
         raise HTTPException(404, str(e))
     return result
@@ -194,11 +213,11 @@ def reject_proposal(proposal_id: str):
 
 # ── Revenue ledger ──────────────────────────────────────────────
 @router.get("/api/revenue")
-def revenue():
+def revenue(merchant_id: str = MERCHANT_ID):
     repo = get_repo()
-    merchant = repo.get_merchant("m1")
-    loans = repo.list_loans("m1")
-    pos = repo.list_pos("m1")
+    merchant = repo.get_merchant(merchant_id)
+    loans = repo.list_loans(merchant_id)
+    pos = repo.list_pos(merchant_id)
     plan = merchant.get("plan", "free") if merchant else "free"
     return planner.revenue_ledger(loans, pos, plan)
 
@@ -207,13 +226,21 @@ def revenue():
 @router.post("/api/merchant/plan")
 def update_plan(req: PlanRequest):
     repo = get_repo()
-    merchant = repo.update_merchant("m1", plan=req.plan)
+    merchant = repo.update_merchant(req.merchant_id, plan=req.plan)
     return {"merchant": merchant}
 
 
 # ── Demo reset ──────────────────────────────────────────────────
 @router.post("/api/demo/reset")
-def demo_reset():
+def demo_reset(merchant_id: str = MERCHANT_ID):
     from app.seed import reset_demo_state
-    reset_demo_state("m1")
+    reset_demo_state(merchant_id)
     return {"ok": True}
+
+
+@router.get("/api/features")
+def features(request: Request):
+    return {
+        "enabled": request.app.state.enabled_extensions,
+        "available": request.app.state.available_extensions,
+    }

@@ -24,7 +24,7 @@ export default function SkuList({ skus, plan }) {
             const barWidth = Math.max(3, Math.min(100, sku.stock_pct * 100))
 
             return (
-              <div
+              <div data-testid="sku-row"
                 key={sku.id}
                 className="flex items-center gap-2.5 px-3 py-2.5 hover:bg-gray-50 cursor-pointer transition-colors"
                 onClick={() => setSelectedSku(sku.id === selectedSku ? null : sku.id)}

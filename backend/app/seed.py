@@ -8,6 +8,7 @@ from datetime import date, timedelta
 import numpy as np
 
 from app.repo import get_repo
+from app.ext import hooks
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ def seed_all():
     suppliers = repo.list_suppliers()
     skus = repo.list_skus("m1")
     logger.info(f"Seed complete: merchants=1 suppliers={len(suppliers)} skus={len(skus)} daily_sales={n_sales}")
+    hooks.emit("data.seeded", kind="seed", merchant_id="m1")
     return {"merchants": 1, "suppliers": len(suppliers), "skus": len(skus), "daily_sales": n_sales}
 
 
@@ -117,6 +119,7 @@ def reset_demo_state(merchant_id: str = "m1"):
     """Restore stock/incoming/cash/plan, clear proposals/POs/loans. Keep forecasts."""
     repo = get_repo()
     repo.clear_transactions(merchant_id)
+    hooks.emit("data.seeded", kind="reset", merchant_id=merchant_id)
     logger.info(f"Demo state reset for {merchant_id}")
 
 

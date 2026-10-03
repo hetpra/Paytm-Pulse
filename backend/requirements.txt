@@ -11,3 +11,5 @@ anthropic
 openai
 pytest
 httpx
+holidays
+python-multipart

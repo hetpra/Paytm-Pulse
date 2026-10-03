@@ -1,144 +1,146 @@
-"""LLM integration — alert generation with auto-fallback to template."""
-
+"""Provider-neutral, failure-safe LLM helpers."""
 from __future__ import annotations
+
+import json
 import logging
 import math
-from typing import Optional
-
-from app.config import LLM_PROVIDER, LLM_MODEL, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY
+import os
+import time
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
+SYSTEM_PROMPT = "You are Paytm Pulse. Write one short friendly stock alert using only supplied facts."
 
-SYSTEM_PROMPT = (
-    "You are Paytm Pulse, a friendly business copilot for small Indian shopkeepers. "
-    "Write ONE short alert (max 60 words) in simple English, no jargon, no markdown. "
-    "Mention the most urgent product and how many days of stock are left, how many items "
-    "need restocking and the total order value, and — only if loan_offer is present — that "
-    "a pre-approved Paytm Business Loan of that exact amount can cover the gap. "
-    'End with: "Approve to place the order." Use ₹. '
-    "Use ONLY the numbers given in the JSON; never invent or recompute numbers."
-)
+
+class TransportError(Exception):
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
+
+
+def _settings() -> tuple[str, str, str, str, float]:
+    provider = os.getenv("LLM_PROVIDER", "none").strip().lower()
+    base = os.getenv("LLM_BASE_URL", "").rstrip("/")
+    model = os.getenv("LLM_MODEL", "").strip()
+    key = os.getenv("LLM_API_KEY", "").strip()
+    timeout = float(os.getenv("LLM_TIMEOUT_S", "8"))
+    if provider == "openrouter":
+        provider, base, key = "openai_compat", base or "https://openrouter.ai/api/v1", key or os.getenv("OPENROUTER_API_KEY", "")
+    elif provider == "openai":
+        provider, base, key = "openai_compat", base or "https://api.openai.com/v1", key or os.getenv("OPENAI_API_KEY", "")
+    elif provider == "anthropic":
+        key = key or os.getenv("ANTHROPIC_API_KEY", "")
+    return provider, base, model, key, timeout
+
+
+def llm_mode() -> str:
+    provider, _, model, _, _ = _settings()
+    return "none" if provider == "none" else f"{provider}:{model or 'unconfigured'}"
+
+
+def extract_json(text: str) -> Any | None:
+    text = text.strip()
+    fence = chr(96) * 3
+    if text.startswith(fence):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.rstrip().endswith(fence):
+            text = text.rstrip()[:-3]
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        return None
+    try:
+        return json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+def _post_json(url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float) -> dict[str, Any]:
+    request = Request(url, data=json.dumps(payload).encode(), headers={**headers, "Content-Type": "application/json"}, method="POST")
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode())
+    except HTTPError as error:
+        raise TransportError(f"HTTP {error.code}", error.code) from error
+    except (URLError, TimeoutError, OSError, json.JSONDecodeError) as error:
+        raise TransportError(str(error)) from error
+
+
+def _complete_compat(system: str, user: str, json_mode: bool, max_tokens: int, temperature: float) -> str | None:
+    _, base, model, key, timeout = _settings()
+    if not base or not model or not key:
+        logger.warning("openai_compat requires LLM_BASE_URL, LLM_MODEL and LLM_API_KEY")
+        return None
+    payload: dict[str, Any] = {"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}], "max_tokens": max_tokens, "temperature": temperature}
+    if json_mode:
+        payload["response_format"] = {"type": "json_object"}
+    data = _post_json(f"{base}/chat/completions", {"Authorization": f"Bearer {key}"}, payload, timeout)
+    try:
+        return data["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+
+
+def _complete_anthropic(system: str, user: str, json_mode: bool, max_tokens: int, temperature: float) -> str | None:
+    _, base, model, key, timeout = _settings()
+    if not model or not key:
+        logger.warning("anthropic requires LLM_MODEL and LLM_API_KEY")
+        return None
+    if json_mode:
+        user += "\nReturn a JSON object only."
+    data = _post_json(f"{base or 'https://api.anthropic.com/v1'}/messages", {"x-api-key": key, "anthropic-version": "2023-06-01"}, {"model": model, "max_tokens": max_tokens, "temperature": temperature, "system": system, "messages": [{"role": "user", "content": user}]}, timeout)
+    try:
+        return data["content"][0]["text"].strip()
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None
+
+
+def complete(system: str, user: str, *, json_mode: bool = False, max_tokens: int = 300, temperature: float = 0.2) -> str | None:
+    provider, _, model, _, _ = _settings()
+    if provider == "none":
+        return None
+    caller = {"openai_compat": _complete_compat, "anthropic": _complete_anthropic}.get(provider)
+    if caller is None:
+        logger.warning("Unknown LLM provider: %s", provider)
+        return None
+    started = time.perf_counter()
+    for attempt in range(2):
+        try:
+            output = caller(system, user, json_mode, max_tokens, temperature)
+            if output is not None and (not json_mode or extract_json(output) is not None):
+                logger.info("LLM provider=%s model=%s latency_ms=%.1f", provider, model, (time.perf_counter() - started) * 1000)
+                return output
+            return None
+        except TransportError as error:
+            if attempt == 0 and error.status in {429, 500, 502, 503, 504}:
+                time.sleep(0.5)
+                continue
+            logger.warning("LLM failure provider=%s model=%s error=%s", provider, model, error)
+            return None
+        except Exception as error:
+            logger.warning("LLM failure provider=%s model=%s error=%s", provider, model, error)
+            return None
+    return None
 
 
 def template_alert(facts: dict) -> str:
-    """Deterministic template fallback — always works."""
     top = facts.get("top_item", {})
-    name = top.get("name", "item")
-    days = math.ceil(top.get("days_left", 1))
-    n = facts.get("items_at_risk", 0)
-    total = facts.get("total", 0)
-    avail = facts.get("cash_available", 0)
+    name, days = top.get("name", "item"), math.ceil(top.get("days_left", 1))
+    count, total, cash = facts.get("items_at_risk", 0), facts.get("total", 0), facts.get("cash_available", 0)
+    suppliers = {item.get("supplier_id", "") for item in facts.get("line_items", [])}
+    message = f"Alert: {name} will run out in {days} day(s). {count} items need restocking. Order Rs {total:,.0f} from {len(suppliers) or 1} distributor(s). You have Rs {cash:,.0f} available"
     loan = facts.get("loan_offer")
-
-    # Count unique suppliers
-    suppliers = set()
-    for item in facts.get("line_items", []):
-        suppliers.add(item.get("supplier_id", ""))
-    k = len(suppliers) if suppliers else 1
-
-    msg = (
-        f"⚠️ {name} will run out in ~{days} day(s). "
-        f"{n} items need restocking — order ₹{total:,.0f} from {k} distributor(s). "
-        f"You have ₹{avail:,.0f} available"
-    )
-
     if loan and loan.get("principal", 0) > 0:
-        msg += f"; a pre-approved Paytm Business Loan of ₹{loan['principal']:,.0f} covers the gap"
-
-    msg += ". Approve to place the order."
-    return msg
-
-
-def _call_openrouter(user_msg: str) -> Optional[str]:
-    """Call OpenRouter (OpenAI-compatible API)."""
-    import openai
-    model = LLM_MODEL or "google/gemini-3.8-flash"
-    logger.info(f"🤖 Calling OpenRouter with model: {model}...")
-    client = openai.OpenAI(
-        api_key=OPENROUTER_API_KEY,
-        base_url="https://openrouter.ai/api/v1",
-    )
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=1500,
-        timeout=15,
-    )
-    content = resp.choices[0].message.content.strip()
-    logger.info(f"✅ OpenRouter response received: {content}")
-    return content
-
-
-def _call_anthropic(user_msg: str) -> Optional[str]:
-    """Call Anthropic directly."""
-    import anthropic
-    client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    model = LLM_MODEL or "claude-haiku-4-5-20251001"
-    resp = client.messages.create(
-        model=model,
-        max_tokens=150,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_msg}],
-    )
-    return resp.content[0].text.strip()
-
-
-def _call_openai(user_msg: str) -> Optional[str]:
-    """Call OpenAI directly."""
-    import openai
-    client = openai.OpenAI(api_key=OPENAI_API_KEY)
-    model = LLM_MODEL or "gpt-4o-mini"
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_msg},
-        ],
-        max_tokens=150,
-        timeout=8,
-    )
-    return resp.choices[0].message.content.strip()
+        message += f"; a pre-approved Paytm Business Loan of Rs {loan['principal']:,.0f} covers the gap"
+    return message + ". Approve to place the order."
 
 
 def generate_alert(facts: dict, language: str = "en") -> str:
-    """
-    Generate an alert message. 8s timeout; any failure → template_alert.
+    payload = {"top_item": facts.get("top_item"), "items_at_risk": facts.get("items_at_risk"), "total": facts.get("total"), "cash_available": facts.get("cash_available"), "loan_offer": facts.get("loan_offer"), "language": language}
+    return complete(SYSTEM_PROMPT, json.dumps(payload, ensure_ascii=False), max_tokens=150) or template_alert(facts)
 
-    facts: {top_item:{name,days_left}, items_at_risk, total, cash_available, loan_offer, line_items}
-    """
-    if LLM_PROVIDER == "none":
-        return template_alert(facts)
 
-    import json
-    # Build user message (only the fields the LLM needs)
-    user_payload = {
-        "top_item": facts.get("top_item"),
-        "items_at_risk": facts.get("items_at_risk"),
-        "total": facts.get("total"),
-        "cash_available": facts.get("cash_available"),
-        "loan_offer": facts.get("loan_offer"),
-    }
-    if language != "en":
-        user_payload["language"] = language
-
-    user_msg = json.dumps(user_payload, ensure_ascii=False)
-
-    try:
-        if LLM_PROVIDER == "openrouter":
-            result = _call_openrouter(user_msg)
-        elif LLM_PROVIDER == "anthropic":
-            result = _call_anthropic(user_msg)
-        elif LLM_PROVIDER == "openai":
-            result = _call_openai(user_msg)
-        else:
-            return template_alert(facts)
-
-        if result:
-            return result
-    except Exception as e:
-        logger.warning(f"LLM call failed ({e}), using template fallback")
-
-    return template_alert(facts)
+if __name__ == "__main__":
+    import sys
+    print(complete("Reply concisely.", " ".join(sys.argv[1:]) or "say ok") or "[template fallback]")

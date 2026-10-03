@@ -1,5 +1,25 @@
 # Paytm Pulse
 
+## Judge-ready extensions
+
+Enable any combination with `EXT_ENABLED=insights,backtest,impact` (or `all`). Each is isolated behind its own API prefix and feature flag:
+
+- **X1 Growth Insights** — an offline, computed sales-opportunity digest and card-based Insights tab.
+- **X2 Backtest** — a 14-day holdout accuracy badge, seasonal-naive comparison, and an explicitly labelled Indian-festival forecast uplift. It uses the `holidays` package when installed.
+- **X3 Impact simulator** — a no-look-ahead comparison of reactive versus Pulse ordering on synthetic history. All amounts are labelled as simulation results; it does not claim realised savings.
+- **X4 Credible lending** — sales-based, capped eligibility with visible illustrative APR and repayment capacity.
+- **X5 Agent trace** — a transparent node-by-node workflow timeline.
+- **X6 Hindi/Hinglish alerts** — saved alert variants, notification preview, and browser speech playback.
+- **X7 Bring your own data** — validated catalog + sales CSV upload into a separate merchant workspace.
+- **X8 Ask Pulse** — grounded, allowlisted sales and stock questions with computed source data.
+- **X9 Distributor portal** — supplier choice plus simulated, idempotent PO delivery tracking.
+- **X10 Autopilot** — Premium-only, capped simulated automated approvals with notifications.
+- **X11 Ordering guards** — pack, MOQ, lead-time variance, and overstock protections.
+- **X12 Hardening** — request IDs, safe errors, rate limits, headers, and audit trail.
+- **X13 Demo/PWA** — `?demo=1` guide, `/status`, and install metadata.
+
+These features use demo/synthetic history and are decision support, not financial guarantees.
+
 **Predictive AI copilot for mid-sized Paytm merchants** — forecasts demand, predicts stockout dates, auto-drafts purchase orders, detects cash-flow gaps, and offers one-click pre-approved Paytm Business Loans.
 
 > ⚠️ **Simulated demo** — All data is synthetic, no real payments or loans are processed.
@@ -19,7 +39,7 @@ cd frontend && npm install && npm run dev
 cd backend && .venv\Scripts\activate && pytest -q
 ```
 
-Copy `.env.example` → `.env` before starting. Default config (`DB_MODE=memory`, `LLM_PROVIDER=none`, `FORECAST_ENGINE=prophet`) runs the full demo with zero external accounts.
+Create or update `.env` directly before starting. Default config (`DB_MODE=memory`, `LLM_PROVIDER=none`, `FORECAST_ENGINE=prophet`) runs the full demo with zero external accounts.
 
 **Frontend:** http://localhost:5173 &nbsp;|&nbsp; **Backend:** http://localhost:8000 &nbsp;|&nbsp; **Health:** http://localhost:8000/health
 
@@ -73,6 +93,25 @@ Copy `.env.example` → `.env` before starting. Default config (`DB_MODE=memory`
 ---
 
 ## Configuration
+
+### Extensions (E0)
+
+The extension framework includes the `insights`, `backtest`, and `impact` feature modules.
+Set EXT_ENABLED to none to run only the core, all (the default) to load every
+installed extension, or a comma-separated feature-flag list. Each extension is
+fault-isolated: a failed hook preserves the core value and a failed setup is
+logged then disabled. Run scripts/gate.sh after adding a module to verify
+core-only, module-only, all-on and frontend-build behaviour.
+
+### LLM providers (E1)
+
+Set LLM_PROVIDER to none, openai_compat, or anthropic. For an
+OpenAI-compatible provider, set LLM_BASE_URL, LLM_MODEL, and LLM_API_KEY;
+switching vendors needs only those environment changes. Anthropic uses the
+same model/key variables. The legacy openai, openrouter, OPENAI_API_KEY,
+OPENROUTER_API_KEY, and ANTHROPIC_API_KEY settings remain supported.
+Calls time out safely, retry once for a 429 or 5xx response, and fall back to
+the deterministic alert template.
 
 | Variable | Default | Options |
 |---|---|---|

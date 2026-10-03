@@ -1,4 +1,4 @@
-export default function Header({ merchant, onPlanToggle }) {
+export default function Header({ merchant, onPlanToggle, onStoreToggle }) {
   return (
     <div className="bg-[#002E6E] text-white px-4 pt-10 pb-4 rounded-b-2xl relative">
       {/* Simulated demo tag */}
@@ -22,6 +22,7 @@ export default function Header({ merchant, onPlanToggle }) {
 
       {/* Plan badge */}
       <div className="mt-2 flex items-center gap-2">
+        {onStoreToggle && <button onClick={onStoreToggle} className="px-2 py-0.5 rounded-full text-[10px] bg-white/15 text-white">{merchant.id === 'm_user' ? 'My store' : 'Demo store'}</button>}
         <button
           onClick={onPlanToggle}
           className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all

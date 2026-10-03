@@ -158,3 +158,12 @@ class SupabaseRepo(BaseRepo):
             self.client.table("suppliers").upsert(s).execute()
         for sk in skus:
             self.client.table("skus").upsert(sk).execute()
+
+    def delete_merchant_data(self, merchant_id: str) -> None:
+        skus = self.list_skus(merchant_id)
+        self.clear_transactions(merchant_id)
+        for sku in skus:
+            self.client.table("forecasts").delete().eq("sku_id", sku["id"]).execute()
+            self.client.table("daily_sales").delete().eq("sku_id", sku["id"]).execute()
+        self.client.table("skus").delete().eq("merchant_id", merchant_id).execute()
+        self.client.table("merchants").delete().eq("id", merchant_id).execute()

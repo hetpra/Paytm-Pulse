@@ -3,6 +3,9 @@
 from __future__ import annotations
 import logging
 import uuid
+import threading
+import time
+from functools import wraps
 from datetime import date, datetime, timedelta, UTC
 from typing import TypedDict, Optional
 
@@ -12,8 +15,38 @@ from langgraph.types import interrupt, Command
 
 from app.repo import get_repo
 from app import planner, llm
+from app.ext import hooks
 
 logger = logging.getLogger(__name__)
+_proposal_locks: dict[str, threading.Lock] = {}
+_proposal_locks_guard = threading.Lock()
+
+
+def traced(name: str):
+    """Emit timing metadata without letting observer extensions affect nodes."""
+    def decorate(fn):
+        @wraps(fn)
+        def wrapped(state: PulseState):
+            started = time.perf_counter()
+            thread_id = state.get("thread_id", "")
+            hooks.emit("graph.step", node=name, status="start", ms=0,
+                       state_keys=list(state.keys()), thread_id=thread_id,
+                       merchant_id=state.get("merchant_id"), proposal_id=state.get("proposal_id"))
+            try:
+                result = fn(state)
+                hooks.emit("graph.step", node=name, status="done",
+                           ms=round((time.perf_counter() - started) * 1000, 2),
+                           state_keys=list((result or {}).keys()), thread_id=thread_id,
+                           merchant_id=state.get("merchant_id"), proposal_id=(result or {}).get("proposal_id", state.get("proposal_id")), result=result or {})
+                return result
+            except Exception:
+                hooks.emit("graph.step", node=name, status="error",
+                           ms=round((time.perf_counter() - started) * 1000, 2),
+                           state_keys=list(state.keys()), thread_id=thread_id,
+                           merchant_id=state.get("merchant_id"), proposal_id=state.get("proposal_id"))
+                raise
+        return wrapped
+    return decorate
 
 
 class PulseState(TypedDict, total=False):
@@ -29,27 +62,20 @@ class PulseState(TypedDict, total=False):
 
 # ── Nodes ───────────────────────────────────────────────────────
 
+@traced("load_and_select")
 def load_and_select(state: PulseState) -> dict:
     """Read SKUs + cached forecasts + merchant; compute status; keep at-risk SKUs."""
     repo = get_repo()
     merchant_id = state["merchant_id"]
     merchant = repo.get_merchant(merchant_id)
-    skus = repo.list_skus(merchant_id)
-    forecasts_list = repo.get_forecasts(merchant_id)
-    forecasts = {f["sku_id"]: f for f in forecasts_list}
-
-    at_risk = []
-    for sku in skus:
-        fc = forecasts.get(sku["id"], {})
-        status = planner.status_for(sku, fc)
-        if status in ("critical", "warning"):
-            sku["_status"] = status
-            sku["_forecast"] = fc
-            at_risk.append(sku)
-
+    from app.routes import risk_view
+    risk_skus, forecasts = risk_view(merchant_id)
+    at_risk = [sku for sku in risk_skus if sku["_status"] in ("critical", "warning")]
+    skus = [{k: v for k, v in sku.items() if not k.startswith("_")} for sku in risk_skus]
     return {"at_risk": at_risk, "plan": {"merchant": merchant, "forecasts": forecasts, "skus": skus}}
 
 
+@traced("draft_po")
 def draft_po(state: PulseState) -> dict:
     """Build line items and POs by supplier."""
     repo = get_repo()
@@ -57,23 +83,29 @@ def draft_po(state: PulseState) -> dict:
     suppliers = {s["id"]: s for s in suppliers_list}
 
     forecasts = state["plan"]["forecasts"]
-    plan_result = planner.build_plan(state["at_risk"], forecasts, suppliers)
+    plan_result = planner.build_plan(state["at_risk"], forecasts, suppliers, state["plan"]["merchant"])
 
     return {"plan": {**state["plan"], **plan_result}}
 
 
+@traced("check_cash")
 def check_cash(state: PulseState) -> dict:
     """Compute cash available, gap, and loan offer."""
     merchant = state["plan"]["merchant"]
     total = state["plan"]["total"]
+    limit = hooks.apply("lending.limit", merchant["preapproved_limit"], merchant=merchant)
     cash_result = planner.cash_check(
         merchant["cash_balance"],
         total,
-        merchant["preapproved_limit"],
+        limit,
     )
+    cash_result["loan_offer"] = hooks.apply("lending.offer", cash_result["loan_offer"],
+                                            gap=cash_result["cash_gap"], total=total,
+                                            merchant=merchant)
     return {"cash": cash_result}
 
 
+@traced("write_alert")
 def write_alert(state: PulseState) -> dict:
     """Generate alert text via LLM (with template fallback)."""
     plan = state["plan"]
@@ -96,10 +128,11 @@ def write_alert(state: PulseState) -> dict:
         "line_items": line_items,
     }
 
-    alert_text = llm.generate_alert(facts)
+    alert_text = hooks.apply("llm.alert_text", llm.generate_alert(facts), facts=facts)
     return {"alert_text": alert_text}
 
 
+@traced("save_proposal")
 def save_proposal(state: PulseState) -> dict:
     """Persist the pending proposal."""
     repo = get_repo()
@@ -130,7 +163,8 @@ def save_proposal(state: PulseState) -> dict:
         "created_at": datetime.now(UTC).isoformat(),
     }
 
-    repo.create_proposal({
+    payload = hooks.apply("proposal.payload", payload)
+    proposal = repo.create_proposal({
         "id": proposal_id,
         "merchant_id": merchant["id"],
         "thread_id": thread_id,
@@ -140,15 +174,18 @@ def save_proposal(state: PulseState) -> dict:
         "created_at": datetime.now(UTC).isoformat(),
     })
 
+    hooks.emit("proposal.created", proposal=proposal)
     return {"proposal_id": proposal_id}
 
 
+@traced("await_approval")
 def await_approval(state: PulseState) -> dict:
     """Pause for human approval — no side effects in this node."""
     decision = interrupt({"proposal_id": state["proposal_id"]})
     return {"decision": decision}
 
 
+@traced("execute")
 def execute(state: PulseState) -> dict:
     """Execute or reject based on decision."""
     repo = get_repo()
@@ -168,7 +205,9 @@ def execute(state: PulseState) -> dict:
         return _execute_approval(repo, proposal, payload, merchant_id)
     else:
         repo.update_proposal(state["proposal_id"], status="rejected", decided_at=datetime.now(UTC).isoformat())
-        return {"result": {"status": "rejected", "proposal": repo.get_proposal(state["proposal_id"])}}
+        proposal = repo.get_proposal(state["proposal_id"])
+        hooks.emit("proposal.rejected", proposal=proposal)
+        return {"result": {"status": "rejected", "proposal": proposal}}
 
 
 def _execute_approval(repo, proposal, payload, merchant_id: str) -> dict:
@@ -235,11 +274,12 @@ def _execute_approval(repo, proposal, payload, merchant_id: str) -> dict:
 
     # Mark proposal approved
     repo.update_proposal(proposal_id, status="approved", decided_at=datetime.now(UTC).isoformat())
-
+    proposal = repo.get_proposal(proposal_id)
+    hooks.emit("proposal.approved", proposal=proposal, purchase_orders=created_pos, loan=created_loan)
     return {
         "result": {
             "status": "approved",
-            "proposal": repo.get_proposal(proposal_id),
+            "proposal": proposal,
             "purchase_orders": created_pos,
             "loan": created_loan,
             "merchant": repo.get_merchant(merchant_id),
@@ -322,52 +362,55 @@ def run_analyze(merchant_id: str) -> Optional[dict]:
 def run_approve(proposal_id: str) -> dict:
     """Resume the graph with approval, or execute directly if thread is lost."""
     repo = get_repo()
-    proposal = repo.get_proposal(proposal_id)
-    if not proposal:
-        raise ValueError(f"Proposal {proposal_id} not found")
+    with _lock_for(proposal_id):
+        proposal = repo.get_proposal(proposal_id)
+        if not proposal:
+            raise ValueError(f"Proposal {proposal_id} not found")
+        if proposal.get("status") != "pending":
+            raise RuntimeError(proposal)
 
-    thread_id = proposal.get("thread_id")
+        thread_id = proposal.get("thread_id")
 
     # Try to resume the graph
-    if thread_id:
-        try:
-            result = graph.invoke(
-                Command(resume={"approved": True}),
-                {"configurable": {"thread_id": thread_id}},
-            )
-            # Extract result from graph state
-            if isinstance(result, dict) and "result" in result:
-                return result["result"]
-        except Exception as e:
-            logger.warning(f"Graph resume failed ({e}), executing directly")
+        if thread_id:
+            try:
+                result = graph.invoke(Command(resume={"approved": True}), {"configurable": {"thread_id": thread_id}})
+                if isinstance(result, dict) and "result" in result:
+                    return result["result"]
+            except Exception as e:
+                logger.warning(f"Graph resume failed ({e}), executing directly")
 
     # Fallback: execute directly from stored proposal payload
-    payload = proposal.get("payload", {})
-    if isinstance(payload, str):
-        import json
-        payload = json.loads(payload)
-
-    result = _execute_approval(repo, proposal, payload, proposal["merchant_id"])
-    return result["result"]
+        payload = proposal.get("payload", {})
+        if isinstance(payload, str):
+            import json
+            payload = json.loads(payload)
+        return _execute_approval(repo, proposal, payload, proposal["merchant_id"])["result"]
 
 
 def run_reject(proposal_id: str) -> dict:
     """Reject a proposal."""
     repo = get_repo()
-    proposal = repo.get_proposal(proposal_id)
-    if not proposal:
-        raise ValueError(f"Proposal {proposal_id} not found")
+    with _lock_for(proposal_id):
+        proposal = repo.get_proposal(proposal_id)
+        if not proposal:
+            raise ValueError(f"Proposal {proposal_id} not found")
+        if proposal.get("status") != "pending":
+            raise RuntimeError(proposal)
 
-    thread_id = proposal.get("thread_id")
+        thread_id = proposal.get("thread_id")
 
-    if thread_id:
-        try:
-            graph.invoke(
-                Command(resume={"approved": False}),
-                {"configurable": {"thread_id": thread_id}},
-            )
-        except Exception:
-            pass
+        if thread_id:
+            try:
+                graph.invoke(Command(resume={"approved": False}), {"configurable": {"thread_id": thread_id}})
+            except Exception:
+                pass
+        repo.update_proposal(proposal_id, status="rejected", decided_at=datetime.now(UTC).isoformat())
+        decided = repo.get_proposal(proposal_id)
+        hooks.emit("proposal.rejected", proposal=decided)
+        return {"proposal": decided}
 
-    repo.update_proposal(proposal_id, status="rejected", decided_at=datetime.now(UTC).isoformat())
-    return {"proposal": repo.get_proposal(proposal_id)}
+
+def _lock_for(proposal_id: str) -> threading.Lock:
+    with _proposal_locks_guard:
+        return _proposal_locks.setdefault(proposal_id, threading.Lock())

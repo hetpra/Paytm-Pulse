@@ -19,6 +19,9 @@ SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
 SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
 
 LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "none")        # none | openrouter | anthropic | openai
+LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "")
+LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
+LLM_TIMEOUT_S: float = float(os.getenv("LLM_TIMEOUT_S", "8"))
 OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
 ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
