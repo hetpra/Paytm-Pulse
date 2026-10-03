@@ -52,21 +52,24 @@ def template_alert(facts: dict) -> str:
 def _call_openrouter(user_msg: str) -> Optional[str]:
     """Call OpenRouter (OpenAI-compatible API)."""
     import openai
+    model = LLM_MODEL or "google/gemini-3.8-flash"
+    logger.info(f"🤖 Calling OpenRouter with model: {model}...")
     client = openai.OpenAI(
         api_key=OPENROUTER_API_KEY,
         base_url="https://openrouter.ai/api/v1",
     )
-    model = LLM_MODEL or "google/gemini-2.0-flash-001"
     resp = client.chat.completions.create(
         model=model,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-        max_tokens=150,
-        timeout=8,
+        max_tokens=1500,
+        timeout=15,
     )
-    return resp.choices[0].message.content.strip()
+    content = resp.choices[0].message.content.strip()
+    logger.info(f"✅ OpenRouter response received: {content}")
+    return content
 
 
 def _call_anthropic(user_msg: str) -> Optional[str]:
