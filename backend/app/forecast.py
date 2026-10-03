@@ -16,8 +16,8 @@ from app.repo import get_repo
 logger = logging.getLogger(__name__)
 
 # Silence Prophet/cmdstanpy loggers
-for _name in ("cmdstanpy", "prophet", "prophet.models"):
-    logging.getLogger(_name).setLevel(logging.WARNING)
+for _name in ("cmdstanpy", "prophet", "prophet.models", "prophet.plot"):
+    logging.getLogger(_name).setLevel(logging.CRITICAL)
 
 
 # ── Stockout math ───────────────────────────────────────────────
