@@ -224,3 +224,8 @@ node_modules/
 
 # Frontend env
 frontend/.env
+
+# Documentation & AI guides (local only)
+AGENTS.md
+MANUAL.md
+
